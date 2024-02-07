@@ -11,7 +11,7 @@ voxel_size = [0.075, 0.075, 0.2]
 out_size_factor = 8
 final_dim=(900, 1600)  # HxW
 downsample=8
-imc = 256
+imc = 256 
 
 input_modality = dict(
     use_lidar=True,
