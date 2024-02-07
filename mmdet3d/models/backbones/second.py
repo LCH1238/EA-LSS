@@ -3,6 +3,7 @@ from mmcv.runner import load_checkpoint
 from torch import nn as nn
 
 from mmdet.models import BACKBONES
+from torch.utils.checkpoint import checkpoint
 
 
 @BACKBONES.register_module()
@@ -24,10 +25,12 @@ class SECOND(nn.Module):
                  layer_nums=[3, 5, 5],
                  layer_strides=[2, 2, 2],
                  norm_cfg=dict(type='BN', eps=1e-3, momentum=0.01),
-                 conv_cfg=dict(type='Conv2d', bias=False)):
+                 conv_cfg=dict(type='Conv2d', bias=False),
+                 with_cp=False):
         super(SECOND, self).__init__()
         assert len(layer_strides) == len(layer_nums)
         assert len(out_channels) == len(layer_nums)
+        self.with_cp = with_cp
 
         in_filters = [in_channels, *out_channels[:-1]]
         # note that when stride > 1, conv2d with same padding isn't
@@ -81,6 +84,9 @@ class SECOND(nn.Module):
         """
         outs = []
         for i in range(len(self.blocks)):
-            x = self.blocks[i](x)
+            if self.with_cp:
+                x = checkpoint(self.blocks[i], x)
+            else:
+                x = self.blocks[i](x)
             outs.append(x)
         return tuple(outs)

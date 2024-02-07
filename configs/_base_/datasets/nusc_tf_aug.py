@@ -6,7 +6,7 @@ class_names = [
 evaluation = dict(interval=10)
 
 dataset_type = 'NuScenesDataset'
-data_root = '/dahuafs/groupdata/share/openset/nuscenes/'
+data_root = './data/nuscenes/'
 input_modality = dict(
     use_lidar=True,
     use_camera=True,
@@ -25,13 +25,13 @@ train_pipeline = [
         load_dim=5,
         use_dim=[0, 1, 2, 3, 4],
     ),
-    dict(
-        type='LoadRadarPointsMultiSweeps',
-        load_dim=18,
-        sweeps_num=5,
-        use_dim=radar_use_dims,
-        max_num=1200
-    ),
+    # dict(
+    #     type='LoadRadarPointsMultiSweeps',
+    #     load_dim=18,
+    #     sweeps_num=5,
+    #     use_dim=radar_use_dims,
+    #     max_num=1200
+    # ),
     dict(
         type='LoadPointsFromMultiSweeps',
         sweeps_num=10,
@@ -53,7 +53,9 @@ train_pipeline = [
     dict(type='MyPad', size_divisor=32),
     dict(type='DefaultFormatBundle3D', class_names=class_names),
     # dict(type='Collect3D', keys=['points', 'img', 'gt_bboxes_3d', 'gt_labels_3d'])
-    dict(type='Collect3D', keys=['points', 'img', 'gt_bboxes_3d', 'gt_labels_3d', 'lidar_aug_matrix', 'radar'])
+    dict(type='Collect3D', keys=['points', 'img', 'gt_bboxes_3d', 'gt_labels_3d', 'lidar_aug_matrix', 
+        # 'radar'
+        ])
 ]
 
 test_pipeline = [
@@ -63,13 +65,13 @@ test_pipeline = [
         load_dim=5,
         use_dim=[0, 1, 2, 3, 4],
     ),
-    dict(
-        type='LoadRadarPointsMultiSweeps',
-        load_dim=18,
-        sweeps_num=5,
-        use_dim=radar_use_dims,
-        max_num=1200
-    ),
+    # dict(
+    #     type='LoadRadarPointsMultiSweeps',
+    #     load_dim=18,
+    #     sweeps_num=5,
+    #     use_dim=radar_use_dims,
+    #     max_num=1200
+    # ),
     dict(
         type='LoadPointsFromMultiSweeps',
         sweeps_num=10,
@@ -97,7 +99,9 @@ test_pipeline = [
                 type='DefaultFormatBundle3D',
                 class_names=class_names,
                 with_label=False),
-            dict(type='Collect3D', keys=['points', 'img', 'radar', 'lidar_aug_matrix'])
+            dict(type='Collect3D', keys=['points', 'img', 
+                                        #  'radar', 
+                                         'lidar_aug_matrix'])
         ])
 ]
 
@@ -109,7 +113,7 @@ data = dict(
         #    dataset=dict(
                 type=dataset_type,
                 data_root=data_root,
-                ann_file=data_root + '/nuscenes_infos_train.pkl',
+                ann_file=data_root + '/Nuscenes_infos_train.pkl',
                 load_interval=1,
                 pipeline=train_pipeline,
                 classes=class_names,
@@ -122,7 +126,7 @@ data = dict(
         type=dataset_type,
         data_root=data_root,
         num_views=num_views,
-        ann_file=data_root + '/nuscenes_infos_val.pkl',
+        ann_file=data_root + '/Nuscenes_infos_val.pkl',
         load_interval=1,
         pipeline=test_pipeline,
         classes=class_names,
@@ -133,7 +137,7 @@ data = dict(
         type=dataset_type,
         data_root=data_root,
         num_views=num_views,
-        ann_file=data_root + '/nuscenes_infos_val.pkl',
+        ann_file=data_root + '/Nuscenes_infos_val.pkl',
         load_interval=1,
         pipeline=test_pipeline,
         classes=class_names,

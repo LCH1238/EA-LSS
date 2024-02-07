@@ -1,0 +1,8 @@
+{
+    "exclude": [
+      "data",
+      "work_dirs",
+      "mmdet3d.egg-info",
+      "build"
+    ],
+  }

@@ -16,6 +16,9 @@ from mmdet3d.models.fusion_layers import apply_3d_transformation
 import torch.nn.functional as F
 import pdb
 
+from torch.utils.checkpoint import checkpoint
+
+
 class Up(nn.Module):
     def __init__(self, in_channels, out_channels, scale_factor=2):
         super().__init__()
@@ -326,30 +329,35 @@ class LiftSplatShoot(nn.Module):
         return points
 
     #lss_sup
-    def get_cam_feats(self, x, d, metas):
-        label_depth = d[:, :, :1]
+    def get_cam_feats(self, x, d, metas):  # d : B x 6 x 5 x 896 x 1600 深度与四个方向梯度
+        label_depth = d[:, :, :1]          # d : B x 6 x 5 x 896 x 1600
         metas[0].update({'label_depth': label_depth})
-        B, N, C, fH, fW = x.shape
-        d = d.view(B * N, *d.shape[2:])
-        x = x.view(B * N, C, fH, fW)
+        B, N, C, fH, fW = x.shape          # fH : 112, fW : 200
+        d = d.view(B * N, *d.shape[2:])    # B*N x 5 x 896 x 1600
+        x = x.view(B * N, C, fH, fW)       # B*N x 256 x 112 x 200
 
-        d = self.dtransform(d)
-        context = self.convnet(x)  # [b*6, 128, 32, 88] 提取语义特征
-        x = torch.cat([x, d], dim=1)
-        depth_pre = self.upsample_depth(x)  # 增加x8上采样模块用来监督深度信息
-        metas[0].update({'pre_upsample': depth_pre})  # [b*6, 118, 256, 704]
-        x = self.prenet(x)  # 合并深度和图像信息 cat好还是add好?  预测深度  [b*6, 128, 32, 88]  (用于计算loss)
-        attention1 = self.attention1(x)
-        depth = self.depthnet(x) * attention1
+        d = checkpoint(self.dtransform, d)
+        # d = self.dtransform(d)             # B*N x 5 x 896 x 1600  -> B*N x 64 x 112 x 200 
+        context = checkpoint(self.convnet, x)
+        # context = self.convnet(x)          # B*N x 256 x 112 x 200 -> B*N x 64 x 112 x 200   提取语义特征
+        x = torch.cat([x, d], dim=1)       # B*N x 256+64 x 112 x 200 
+        
+        depth_pre = checkpoint(self.upsample_depth, x)
+        # depth_pre = self.upsample_depth(x)  # B*N x 256+64 x 112 x 200 -> B*N x D x 896 x 1600  增加x8上采样模块用来监督深度信息
+        
+        metas[0].update({'pre_upsample': depth_pre})  # B*N x D x 896 x 1600
+        x = self.prenet(x) # B*N x 256+64 x 112 x 200 -> B*N x 256 x 112 x 200 # 合并深度和图像信息 cat好还是add好?  预测深度  [b*6, 128, 32, 88]  (用于计算loss)
+        attention1 = self.attention1(x) # 256 -> B*N x 1 x 112 x 200
+        depth = self.depthnet(x) * attention1  # B*N x D x 112 x 200
         metas[0].update({'pre_depth': depth})
         depth = depth.softmax(dim=1)
 
         #depth = depth
-        x = self.contextnet(x) + context
-        attention2 = self.attention2(x)
-        x = depth.unsqueeze(1) * (x * attention2).unsqueeze(2)
-        x = x.view(B, N, self.camC, self.D, fH, fW)
-        x = x.permute(0, 1, 3, 4, 5, 2)
+        x = self.contextnet(x) + context  # B*N x 256 x 112 x 200 -> B*N x 64 x 112 x 200
+        attention2 = self.attention2(x)   # B*N x 64 x 112 x 200 -> B*N x 1 x 112 x 200
+        x = depth.unsqueeze(1) * (x * attention2).unsqueeze(2) # B*N x 64 x D x 112 x 200
+        x = x.view(B, N, self.camC, self.D, fH, fW)  # B x N x 64 x D x 112 x 200
+        x = x.permute(0, 1, 3, 4, 5, 2)  # B x N x D x 112 x 200 x 64
         return x, depth, metas
 
     """
@@ -403,7 +411,7 @@ class LiftSplatShoot(nn.Module):
         return final
 
     def get_voxels(self, x, rots=None, trans=None, post_rots=None, post_trans=None, extra_rots=None, extra_trans=None, depth_lidar=None, img_metas=None):
-        geom = self.get_geometry(rots, trans, post_rots, post_trans, extra_rots, extra_trans)
+        geom = self.get_geometry(rots, trans, post_rots, post_trans, extra_rots, extra_trans)  # B x 6 x 41 x 112 x 200 x 3
         x, depth, img_metas = self.get_cam_feats(x, depth_lidar, img_metas)
         x = self.voxel_pooling(geom, x)
         return x, depth, img_metas
@@ -416,8 +424,13 @@ class LiftSplatShoot(nn.Module):
 
     def forward(self, x, rots, trans, lidar2img_rt=None, img_metas=None, post_rots=None, post_trans=None,
                 extra_rots=None, extra_trans=None, depth_lidar=None):
-        x, depth, img_metas = self.get_voxels(x, rots, trans, post_rots, post_trans, extra_rots, extra_trans, depth_lidar, img_metas) # [B, C, H, W, L]
-        bev = self.s2c(x)
-        x = self.bevencode(bev)
+        '''
+        x : b x n x 256 x H x W
+        
+        '''
+        
+        x, depth, img_metas = self.get_voxels(x, rots, trans, post_rots, post_trans, extra_rots, extra_trans, depth_lidar, img_metas) # [B, C, H, W, L]  H是z轴的，此时是多层BEV； W,L是BEV平面上的轴
+        bev = self.s2c(x) # B x C*H x H x L; B x 832 x 180 x 180
+        x = self.bevencode(bev) # B x 256 x 180 x 180
         return x, depth, img_metas
 

@@ -90,7 +90,8 @@ model = dict(
         layer_nums=[15, 15],
         layer_strides=[1, 2],
         norm_cfg=dict(type='BN', eps=0.001, momentum=0.01),
-        conv_cfg=dict(type='Conv2d', bias=False)),
+        conv_cfg=dict(type='Conv2d', bias=False),
+        with_cp=True),
     pts_neck=dict(
         type='SECONDFPN',
         #in_channels=[128, 256],
@@ -212,8 +213,8 @@ find_unused_parameters = True
 no_freeze_head = True
 
 data = dict(
-    samples_per_gpu=2,
-    workers_per_gpu=6,)
+    samples_per_gpu=1,
+    workers_per_gpu=0,)
 
 checkpoint_config = dict(interval=5)
 work_dir = './model/ealss_large'

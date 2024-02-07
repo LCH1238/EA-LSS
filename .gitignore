@@ -1,0 +1,6 @@
+*.so
+*.pyc
+work_dirs/
+data/
+build/
+mmdet3d.egg-info/

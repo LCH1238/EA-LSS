@@ -1,0 +1,29 @@
+{
+    // 使用 IntelliSense 了解相关属性。 
+    // 悬停以查看现有属性的描述。
+    // 欲了解更多信息，请访问: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "test_ealss",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "./tools/test.py",
+            "console": "integratedTerminal",
+            "args": [
+                "configs/EALSS/ealss_4x8_10e_nusc_aug_large.py",
+                "--eval", "mAP+NDS"                
+            ]
+        },
+        {
+            "name": "train_ealss",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "./tools/train.py",
+            "console": "integratedTerminal",
+            "args": [
+                "configs/EALSS/ealss_4x8_10e_nusc_aug_large.py",
+            ]
+        }
+    ]
+}

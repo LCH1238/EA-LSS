@@ -6,7 +6,7 @@ from os import path as osp
 from torch import nn as nn
 from torch.nn import functional as F
 from sklearn.cluster import DBSCAN
-from torch_scatter import scatter
+# from torch_scatter import scatter
 import time
 from mmdet3d.core import draw_heatmap_gaussian
 import cv2
@@ -87,6 +87,12 @@ class EALSS(MVXFasterRCNN):
         self.init_weights(pretrained=kwargs.get('pretrained', None))
         self.init_weights_img(pretrained=kwargs.get('pretrained', None))
         self.freeze()
+        
+        self.fack_img_backbone = nn.Sequential(
+            nn.Conv2d(3, 256, 8, stride=8),
+            nn.BatchNorm2d(256),
+            nn.ReLU()
+        )
 
     def freeze(self):
         if self.freeze_img:
@@ -146,17 +152,22 @@ class EALSS(MVXFasterRCNN):
         if self.with_pts_neck:
             x = self.pts_neck(x)
         return x
+    
+    def fake_extract_img_feat(self, img, img_metas=None):
+        b, n, c, h, w = img.shape
+        img = img.view(b*n, c, h, w)
+        return [self.fack_img_backbone(img)]
 
     def extract_feat(self, points, img, img_metas, img_aug_matrix=None, lidar_aug_matrix=None, gt_bboxes_3d=None):
         """Extract features from images and points."""
         #pdb.set_trace()
-        img_size = img.size()  # b, n, 3, 448, 800
-        img_feats = self.extract_img_feat(img, img_metas)  # b*n, 3, 112, 200
-        pts_feats = self.extract_pts_feat(points, img_feats, img_metas)  # b, c, h, w
+        img_size = img.size()  # b, n, 3, 896, 1600
+        img_feats = self.fake_extract_img_feat(img, img_metas)  # b*n, 256, 112, 200
+        pts_feats = self.extract_pts_feat(points, img_feats, img_metas)  # b, 1024, 180, 180
         if self.lift:
             BN, C, H, W = img_feats[0].shape
             batch_size = BN//self.num_views
-            img_feats_view = img_feats[0].view(batch_size, self.num_views, C, H, W)
+            img_feats_view = img_feats[0].view(batch_size, self.num_views, C, H, W) # b x n x 256 x 112 x 200
             rots = []
             trans = []
             rots_depth = []
@@ -204,7 +215,7 @@ class EALSS(MVXFasterRCNN):
                 extra_trans = lidar_aug_matrix[..., :3, 3]
             #pdb.set_trace()
             batch_size = len(points)
-            depth = torch.zeros(batch_size, img_size[1], 1, img_size[3], img_size[4]).cuda() # 创建大小 [b, n, 1, 448, 800]
+            depth = torch.zeros(batch_size, img_size[1], 1, img_size[3], img_size[4]).cuda() # 创建大小 [b, n, 1, 896, 1600]
 
             for b in range(batch_size):
                 cur_coords = points[b].float()[:, :3]  #取点的xyz
@@ -243,16 +254,16 @@ class EALSS(MVXFasterRCNN):
                 for c in range(on_img.shape[0]):
                     masked_coords = cur_coords[c, on_img[c]].long()  # 点云投影到图像坐标
                     masked_dist = dist[c, on_img[c]]  # 对应深度
-                    depth[b, c, 0, masked_coords[:, 0], masked_coords[:, 1]] = masked_dist.float()  # 稀疏的深度约束图（用于计算loss）[b, n, 1, 448, 800]
+                    depth[b, c, 0, masked_coords[:, 0], masked_coords[:, 1]] = masked_dist.float()  # 稀疏的深度约束图（用于计算loss）[b, n, 1, 896, 1600]
 
             step = 7
             B, N, C, H, W = depth.size()
             depth_tmp = depth.reshape(B*N, C, H, W)
-            pad = (step - 1) // 2
-            depth_tmp = F.pad(depth_tmp, [pad, pad, pad, pad], mode='constant', value=0)
-            patches = depth_tmp.unfold(dimension=2, size=step, step=1)
-            patches = patches.unfold(dimension=3, size=step, step=1)
-            max_depth, _ = patches.reshape(B, N, C, H, W, -1).max(dim=-1)  # [2, 6, 1, 256, 704]
+            pad = (step - 1) // 2    # 3
+            depth_tmp = F.pad(depth_tmp, [pad, pad, pad, pad], mode='constant', value=0)  # b*n x 1 x 902 x 1606 
+            patches = depth_tmp.unfold(dimension=2, size=step, step=1)                    # b*n x 1 x 896 x 1606 x 7
+            patches = patches.unfold(dimension=3, size=step, step=1)                      # b*n x 1 x 896 x 1600 x 7 x 7
+            max_depth, _ = patches.reshape(B, N, C, H, W, -1).max(dim=-1)  # [2, 6, 1, 896, 1600]  每个depth都是附近7x7的最大值
             img_metas[0].update({'max_depth': max_depth})
 
             # 求解max_depth四个方向梯度, 随后concat depth, 以缓解深度跳变对深度预测模块的影响
@@ -261,18 +272,18 @@ class EALSS(MVXFasterRCNN):
             max_depth_tmp = max_depth.reshape(B*N, C, H, W)
             output_list = []
             for shift in shift_list:
-                transform_matrix =torch.tensor([[1, 0, shift[0]],[0, 1, shift[1]]]).unsqueeze(0).repeat(B*N, 1, 1).cuda()
-                grid = F.affine_grid(transform_matrix, max_depth_tmp.shape).float()
-                output = F.grid_sample(max_depth_tmp, grid, mode='nearest').reshape(B, N, C, H, W)  #平移后图像
+                transform_matrix = torch.tensor([[1, 0, shift[0]],[0, 1, shift[1]]]).unsqueeze(0).repeat(B*N, 1, 1).cuda()
+                grid = F.affine_grid(transform_matrix, max_depth_tmp.shape).float()  # b*n x 896 x 1600 x 2
+                output = F.grid_sample(max_depth_tmp, grid, mode='nearest').reshape(B, N, C, H, W)  #平移后图像 b x n x 1 x 896 x 1600
                 output = max_depth - output
                 output_mask = ((output == max_depth) == False)
                 output = output * output_mask
                 output_list.append(output)
-            grad = torch.cat(output_list, dim=2)  # [2, 6, 4, 256, 704]
-            max_grad = torch.abs(grad).max(dim=2)[0].unsqueeze(2)
+            grad = torch.cat(output_list, dim=2)  # [B, 6, 4, 896, 1600]
+            max_grad = torch.abs(grad).max(dim=2)[0].unsqueeze(2) # B x 6 x 1 x 896 x 1600
             img_metas[0].update({'max_grad': max_grad})
             #depth_ = depth
-            depth = torch.cat([depth, grad], dim=2)  # [2, 6, 5, 256, 704]
+            depth = torch.cat([depth, grad], dim=2)  # [2, 6, 5, 896, 1600]
             img_bev_feat, depth_dist, img_metas = self.lift_splat_shot_vis(img_feats_view, rots, trans, lidar2img_rt=lidar2img_rt, img_metas=img_metas,
                                                                 post_rots=post_rots, post_trans=post_trans, extra_rots=extra_rots,extra_trans=extra_trans,
                                                                 depth_lidar=depth)

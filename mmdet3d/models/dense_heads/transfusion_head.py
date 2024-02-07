@@ -8,7 +8,7 @@ import torch.nn.functional as F
 from torch.nn.parameter import Parameter
 from torch.nn import Linear
 from torch.nn.init import xavier_uniform_, constant_
-from torch_scatter import scatter
+# from torch_scatter import scatter
 
 from mmdet3d.core import (circle_nms, draw_heatmap_gaussian, gaussian_radius,
                           xywhr2xyxyr, limit_period, PseudoSampler)
